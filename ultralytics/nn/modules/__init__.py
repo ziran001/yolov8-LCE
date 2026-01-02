@@ -188,8 +188,5 @@ __all__ = (
     "Index",
     "A2C2f",
     "LCR",
-    "C2fLCR",
-    "EPConv",
-    "GhostDetect",
     "SqueezeExcitation",
 )
