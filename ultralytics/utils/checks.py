@@ -810,11 +810,16 @@ def check_amp(model):
         LOGGER.info(f"{prefix}checks passed ✅")
     except ConnectionError:
         LOGGER.warning(f"{prefix}checks skipped. Offline and unable to download YOLO11n for AMP checks. {warning_msg}")
-    except (AttributeError, ModuleNotFoundError):
+        return False
+    except (AttributeError, ModuleNotFoundError, NotImplementedError):
         LOGGER.warning(
             f"{prefix}checks skipped. "
             f"Unable to load YOLO11n for AMP checks due to possible Ultralytics package modifications. {warning_msg}"
         )
+        return False
+    except Exception as e:
+        LOGGER.warning(f"{prefix}checks skipped due to unexpected error '{e}'. AMP will be disabled for safety.")
+        return False
     except AssertionError:
         LOGGER.error(
             f"{prefix}checks failed. Anomalies were detected with AMP on your system that may lead to "
