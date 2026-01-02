@@ -24,6 +24,8 @@ __all__ = (
     "Concat",
     "RepConv",
     "Index",
+    "SqueezeExcitation",
+    "EPConv",
 )
 
 
@@ -371,6 +373,81 @@ class GhostConv(nn.Module):
         """
         y = self.cv1(x)
         return torch.cat((y, self.cv2(y)), 1)
+
+
+class SqueezeExcitation(nn.Module):
+    """Squeeze-and-Excitation module for channel-wise attention."""
+
+    def __init__(self, channels: int, reduction: int = 16):
+        """Initialize the SE block with channel squeeze and excitation fully connected layers."""
+        super().__init__()
+        hidden = max(channels // reduction, 1)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Conv2d(channels, hidden, 1, bias=True),
+            nn.SiLU(),
+            nn.Conv2d(hidden, channels, 1, bias=True),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply SE attention to the input tensor."""
+        return x * self.fc(self.pool(x))
+
+
+class EPConv(nn.Module):
+    """
+    Efficient Partial Convolution (EPConv) module.
+
+    Splits the input channels asymmetrically to combine a primary convolution branch with a lightweight group
+    convolution branch. A ResNet-D style shortcut and SE attention are applied for improved feature utilization.
+    """
+
+    default_act = nn.SiLU()
+
+    def __init__(self, c1: int, c2: int, k: int = 3, s: int = 2, p=None, g: int = 1, act=True, reduction: int = 16):
+        """
+        Initialize EPConv.
+
+        Args:
+            c1 (int): Number of input channels.
+            c2 (int): Number of output channels.
+            k (int): Kernel size of the spatial convolutions.
+            s (int): Stride of the spatial convolutions.
+            p (int | None): Padding value. If None, autopad is used.
+            g (int): Unused placeholder to keep signature parity with Conv.
+            act (bool | nn.Module): Activation function.
+            reduction (int): Reduction ratio for SE attention.
+        """
+        super().__init__()
+        p = autopad(k, p)
+        self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+        # Asymmetric channel split: 1/8 for main branch, 7/8 for auxiliary branch
+        main_channels = max(c1 // 8, 1)
+        aux_channels = c1 - main_channels
+
+        self.branch1 = nn.Sequential(
+            nn.Conv2d(main_channels, main_channels, k, s, p, bias=False),
+            nn.BatchNorm2d(main_channels),
+        )
+        self.branch2 = nn.Sequential(
+            nn.Conv2d(aux_channels, aux_channels, k, s, p, groups=max(aux_channels // 2, 1), bias=False),
+            nn.BatchNorm2d(aux_channels),
+        )
+
+        self.project = nn.Sequential(nn.Conv2d(c1, c2, 1, 1, bias=False), nn.BatchNorm2d(c2))
+        self.shortcut = nn.Sequential(nn.AvgPool2d(s, stride=s), nn.Conv2d(c1, c2, 1, 1, bias=False), nn.BatchNorm2d(c2))
+        self.se = SqueezeExcitation(c2, reduction=reduction)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass for EPConv."""
+        x1, x2 = x.split((self.branch1[0].in_channels, self.branch2[0].in_channels), dim=1)
+        y1 = self.branch1(x1)
+        y2 = self.branch2(x2)
+        y = torch.cat((y1, y2), dim=1)
+        y = self.project(y)
+        shortcut = self.shortcut(x)
+        return self.act(self.se(y + shortcut))
 
 
 class RepConv(nn.Module):

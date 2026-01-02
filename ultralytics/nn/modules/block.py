@@ -52,6 +52,8 @@ __all__ = (
     "PSA",
     "SCDown",
     "TorchVision",
+    "LCR",
+    "C2fLCR",
 )
 
 
@@ -80,6 +82,61 @@ class DFL(nn.Module):
         b, _, a = x.shape  # batch, channels, anchors
         return self.conv(x.view(b, 4, self.c1, a).transpose(2, 1).softmax(1)).view(b, 4, a)
         # return self.conv(x.view(b, self.c1, 4, a).softmax(1)).view(b, 4, a)
+
+
+class LCR(nn.Module):
+    """
+    Lightweight Complementary Residual module.
+
+    Uses dual pooling branches followed by depthwise convolutions to capture complementary stable and discriminative
+    features, then fuses them with a residual connection and channel mixing.
+    """
+
+    def __init__(self, c1: int):
+        """Initialize LCR with the number of input channels."""
+        super().__init__()
+        c_half = c1 // 2
+        self.pool_avg = nn.AvgPool2d(3, stride=1, padding=1)
+        self.pool_max = nn.MaxPool2d(3, stride=1, padding=1)
+        self.dw1 = DWConv(c_half, c_half, 3, 1)
+        self.dw2 = DWConv(c1 - c_half, c1 - c_half, 3, 1)
+        self.mix = Conv(c1, c1, 1, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply dual-branch pooling, depthwise convolutions, residual fusion and channel mixing."""
+        x1, x2 = x.split((self.dw1.conv.in_channels, self.dw2.conv.in_channels), 1)
+        y1 = self.dw1(self.pool_avg(x1))
+        y2 = self.dw2(self.pool_max(x2))
+        y = torch.cat((y1, y2), 1)
+        return self.mix(y + x)
+
+
+class C2fLCR(nn.Module):
+    """C2f variant that replaces Bottleneck blocks with LCR modules."""
+
+    def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = False, g: int = 1, e: float = 0.5):
+        """
+        Initialize C2fLCR.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels.
+            n (int): Number of LCR modules.
+            shortcut (bool): Unused, kept for signature parity.
+            g (int): Unused, kept for signature parity.
+            e (float): Expansion ratio.
+        """
+        super().__init__()
+        self.c = int(c2 * e)
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)
+        self.m = nn.ModuleList(LCR(self.c) for _ in range(n))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through C2fLCR layer."""
+        y = list(self.cv1(x).chunk(2, 1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
 
 
 class Proto(nn.Module):
