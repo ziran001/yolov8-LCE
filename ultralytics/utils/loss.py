@@ -110,10 +110,21 @@ class DFLoss(nn.Module):
 class BboxLoss(nn.Module):
     """Criterion class for computing training losses for bounding boxes."""
 
-    def __init__(self, reg_max: int = 16):
+    def __init__(
+        self,
+        reg_max: int = 16,
+        use_wiouv3: bool = False,
+        wiou_alpha: float = 1.7,
+        wiou_delta: float = 2.7,
+        eps: float = 1e-7,
+    ):
         """Initialize the BboxLoss module with regularization maximum and DFL settings."""
         super().__init__()
         self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
+        self.use_wiouv3 = use_wiouv3
+        self.alpha = wiou_alpha
+        self.delta = wiou_delta
+        self.eps = eps
 
     def forward(
         self,
@@ -127,8 +138,12 @@ class BboxLoss(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute IoU and DFL losses for bounding boxes."""
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
-        iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
-        loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
+        if self.use_wiouv3:
+            loss_iou = (self.wiouv3_loss(pred_bboxes[fg_mask], target_bboxes[fg_mask]) * weight).sum()
+        else:
+            iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
+            loss_iou = ((1.0 - iou) * weight).sum()
+        loss_iou = loss_iou / target_scores_sum
 
         # DFL loss
         if self.dfl_loss:
@@ -139,6 +154,26 @@ class BboxLoss(nn.Module):
             loss_dfl = torch.tensor(0.0).to(pred_dist.device)
 
         return loss_iou, loss_dfl
+
+    def wiouv3_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Compute WIoUv3 loss for bounding boxes."""
+        iou = bbox_iou(pred, target, xywh=False, CIoU=False)
+        iou_loss = 1.0 - iou
+
+        # Center distance weighting (ResNet-D shortcut encourages average pooling)
+        px, py = (pred[..., 0] + pred[..., 2]) / 2, (pred[..., 1] + pred[..., 3]) / 2
+        gx, gy = (target[..., 0] + target[..., 2]) / 2, (target[..., 1] + target[..., 3]) / 2
+        gw, gh = target[..., 2] - target[..., 0], target[..., 3] - target[..., 1]
+        center_dist = (px - gx).pow(2) + (py - gy).pow(2)
+        scale = (gw.pow(2) + gh.pow(2)).clamp(min=self.eps)
+        wiou_weight = torch.exp(-center_dist / scale).detach()
+
+        base_loss = wiou_weight * iou_loss
+        with torch.no_grad():
+            beta = base_loss / (iou_loss + self.eps)
+            focus_den = (self.alpha * beta - self.delta).abs().clamp(min=self.eps)
+            focus = beta / (self.delta * focus_den)
+        return base_loss * focus
 
 
 class RotatedBboxLoss(BboxLoss):
@@ -213,7 +248,13 @@ class v8DetectionLoss:
         self.use_dfl = m.reg_max > 1
 
         self.assigner = TaskAlignedAssigner(topk=tal_topk, num_classes=self.nc, alpha=0.5, beta=6.0)
-        self.bbox_loss = BboxLoss(m.reg_max).to(device)
+        self.use_wiouv3 = getattr(h, "wiouv3", False)
+        self.bbox_loss = BboxLoss(
+            m.reg_max,
+            use_wiouv3=self.use_wiouv3,
+            wiou_alpha=getattr(h, "wiou_alpha", 1.7),
+            wiou_delta=getattr(h, "wiou_delta", 2.7),
+        ).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
     def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor) -> torch.Tensor:

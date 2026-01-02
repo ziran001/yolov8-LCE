@@ -1,0 +1,33 @@
+# Pest24 dataset config for YOLO-LCE reproduction
+# Dataset source: https://www.kaggle.com/datasets/boatshuai/pest24
+
+path: datasets/pest24
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: Bollworm
+  1: Meadow borer
+  2: Gryllotalpa orientalis
+  3: Little Gecko
+  4: Agriotes fuscicollis Miwa
+  5: Nematode trench
+  6: Athetis lepigone
+  7: Scotogramma trifolii Rottemberg
+  8: Armyworm
+  9: Spodoptera cabbage
+  10: Anomala corpulenta
+  11: Spodoptera exigua
+  12: Plutella xylostella
+  13: Holotrichia parallela
+  14: Rice planthopper
+  15: Yellow tiger
+  16: Land tiger
+  17: Eight-character tiger
+  18: Holotrichia oblita
+  19: Stem borer
+  20: Striped rice borer
+  21: Rice Leaf Roller
+  22: Spodoptera litura
+  23: Melahotus

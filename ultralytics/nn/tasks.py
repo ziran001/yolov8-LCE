@@ -30,6 +30,7 @@ from ultralytics.nn.modules import (
     Bottleneck,
     BottleneckCSP,
     C2f,
+    C2fLCR,
     C2fAttn,
     C2fCIB,
     C2fPSA,
@@ -44,6 +45,7 @@ from ultralytics.nn.modules import (
     Conv2,
     ConvTranspose,
     Detect,
+    EPConv,
     DWConv,
     DWConvTranspose2d,
     Focus,
@@ -54,6 +56,7 @@ from ultralytics.nn.modules import (
     ImagePoolingAttn,
     Index,
     LRPCHead,
+    GhostDetect,
     Pose,
     RepC3,
     RepConv,
@@ -1580,6 +1583,7 @@ def parse_model(d, ch, verbose=True):
             Conv,
             ConvTranspose,
             GhostConv,
+            EPConv,
             Bottleneck,
             GhostBottleneck,
             SPP,
@@ -1592,6 +1596,7 @@ def parse_model(d, ch, verbose=True):
             C1,
             C2,
             C2f,
+            C2fLCR,
             C3k2,
             RepNCSPELAN4,
             ELAN1,
@@ -1618,6 +1623,7 @@ def parse_model(d, ch, verbose=True):
             C1,
             C2,
             C2f,
+            C2fLCR,
             C3k2,
             C2fAttn,
             C3,
@@ -1681,7 +1687,18 @@ def parse_model(d, ch, verbose=True):
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
         elif m in frozenset(
-            {Detect, WorldDetect, YOLOEDetect, Segment, YOLOESegment, Pose, OBB, ImagePoolingAttn, v10Detect}
+            {
+                Detect,
+                GhostDetect,
+                WorldDetect,
+                YOLOEDetect,
+                Segment,
+                YOLOESegment,
+                Pose,
+                OBB,
+                ImagePoolingAttn,
+                v10Detect,
+            }
         ):
             args.append([ch[x] for x in f])
             if m is Segment or m is YOLOESegment:
